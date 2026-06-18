@@ -8,4 +8,4 @@ pygame.init()
 
 # Colours
 
-# Arham's Comptech Assessment
+# Arham's Comptech Assessment - a top-down shooter
