@@ -106,6 +106,7 @@ while playing:
 
     pygame.display.flip()
 
+# profile swap
 
 pygame.quit()
 sys.exit()
