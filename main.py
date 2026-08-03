@@ -3,7 +3,7 @@ import pygame
 import random
 import math
 import sys
-
+import os
 
 # initialisation
 pygame.init()
@@ -27,19 +27,40 @@ pygame.display.set_caption("charaacter does not move well bruh")
 clock = pygame.time.Clock()
 
 # animation lists
+front_folder = "assets/images/main character/front-animations"
 front_frames = []
+for file in sorted(os.listdir(front_folder)):
+    if file.lower().endswith(".png"):
+        path = os.path.join(front_folder, file)
+        front_frames.append(pygame.image.load(path))
 
+back_folder = "assets/images/main character/back-animations"
 back_frames = []
+for file in sorted(os.listdir(back_folder)):
+    if file.lower().endswith(".png"):
+        path = os.path.join(back_folder, file)
+        back_frames.append(pygame.image.load(path))
 
-right_frames = [
-    pygame.image.load("assets/images/main character/side-animations/sprite_00.png"),
-    pygame.image.load("assets/images/main character/side-animations/sprite_01.png"),
-    pygame.image.load("assets/images/main character/side-animations/sprite_02.png")
-]
+right_folder = "assets/images/main character/side-animations"
+right_frames = []
+for file in sorted(os.listdir(right_folder)):
+    if file.lower().endswith(".png"):
+        path = os.path.join(right_folder, file)
+        right_frames.append(pygame.image.load(path))
 
+frontright_folder = "assets/images/main character/frontside-animations"
 frontright_frames = []
+for file in sorted(os.listdir(frontright_folder)):
+    if file.lower().endswith(".png"):
+        path = os.path.join(frontright_folder, file)
+        frontright_frames.append(pygame.image.load(path))
 
+backright_folder = "assets/images/main character/backside-animations"
 backright_frames = []
+for file in sorted(os.listdir(backright_folder)):
+    if file.lower().endswith(".png"):
+        path = os.path.join(backright_folder, file)
+        backright_frames.append(pygame.image.load(path))
 
 # scale the pixel art up to size
 front_frames = [pygame.transform.scale(frame, (64, 64)) for frame in front_frames]
