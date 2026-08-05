@@ -4,6 +4,8 @@ import math
 import sys
 import os
 
+from player import Player
+
 # initialisation
 pygame.init()
 
@@ -109,10 +111,19 @@ frontside_run = scale_frames(
 )
 frontleft_run = mirror(frontside_run)
 
+animations = {
+    "front":        front_run,
+    "back":         back_run,
+    "side":         side_run,
+    "side_left":    left_run,
+    "backside":     backside_run,
+    "backside_left":backleft_run,
+    "frontside":    front_run
+}
 
 # character position
-x = 400
-y = 300
+player = Player(*floor.find_spawn_point(), animations)
+floor_number = 1
 
 # last direction the player pressed - used to pick the right sprite set
 facing = "front"
@@ -136,101 +147,14 @@ while playing:
             playing = False
 
     keys = pygame.key.get_pressed()
+    dx, dy = player.handle_input(keys)
+    player.move(dx, dy, floor.get_solid_rects()) # for adding floors later
+    player.update_animation()
 
-    # track which directions are held this frame
-    up    = keys[pygame.K_w] or keys[pygame.K_UP]
-    down  = keys[pygame.K_s] or keys[pygame.K_DOWN]
-    left  = keys[pygame.K_a] or keys[pygame.K_LEFT]
-    right = keys[pygame.K_d] or keys[pygame.K_RIGHT]
-    escape = keys[pygame.K_ESCAPE]
-
-    moving = False
-    dx = 0
-    dy = 0
-
-    if escape:
-        playing = False
-
-    # cardinal movement
-    if left:
-        dx -= speed
-        moving = True
-    if right:
-        dx += speed
-        moving = True
-    if up:
-        dy -= speed
-        moving = True
-    if down:
-        dy += speed
-        moving = True
-
-    if dx != 0 and dy != 0:
-        inv = 1 / math.sqrt(2)
-        dx *= inv
-        dy *= inv
-
-    x += dx
-    y += dy
-
-    if moving:
-        if up and not down and not left and not right:
-            facing = "back"
-        elif down and not up and not left and not right:
-            facing = "front"
-        elif left and not right and not up and not down:
-            facing = "side"
-            facing_left = True
-        elif right and not left and not up and not down:
-            facing = "side"
-            facing_left = False
-        elif up and right:
-            facing = "backside"
-            facing_left = False
-        elif up and left:
-            facing = "backside"
-            facing_left = True
-        elif down and right:
-            facing = "frontside"
-            facing_left = False
-        elif down and left:
-            facing = "frontside"
-            facing_left = True
-
-    # pick the right run frame list for the current facing
-    if facing == "back":
-        run_frames = back_run
-    elif facing == "front":
-        run_frames = front_run
-    elif facing == "side":
-        run_frames = left_run if facing_left else side_run
-    elif facing == "backside":
-        run_frames = backleft_run if facing_left else backside_run
-    elif facing == "frontside":
-        run_frames = frontleft_run if facing_left else frontside_run
-    else:
-        run_frames = front_run
-
-    # advance the animation
-    if moving:
-        frames_to_use = run_frames
-    else:
-        frames_to_use = run_frames
-        current_frame = 0
-
-    if frames_to_use:
-        current_frame %= len(frames_to_use)
-    else:
-        current_frame = 0
-
-    now = pygame.time.get_ticks()
-    if moving and now - last_frame_time > frame_delay:
-        current_frame = (current_frame + 1) % len(frames_to_use)
-        last_frame_time = now
-
-    # draw
-    screen.fill((40, 40, 40))
-    screen.blit(frames_to_use[current_frame], (x, y))
+    # drawing (utilising a camera/floor template I will actually code later)
+    screen.fill((15, 15, 20))
+    floor.draw(screen, camera)
+    player.draw(screen, camera)
     pygame.display.flip()
 
 print("play again bro or are you too scareeeeeed...")

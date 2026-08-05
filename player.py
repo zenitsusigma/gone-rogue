@@ -102,6 +102,27 @@ class Player:
         self.wx, self.wy = float(wx), float(wy)
         self.rect.center = (int(self.wx), int(self.wy))
 
-    
+    def current_frames(self):
+        key = self.facing
+        if self.facing in ("side", "backside", "frontside") and self.facing_left:
+            key = key + "_left"
+        return self.animations.get(key, self.animation["front"])
 
-        
+    def update_animation(self):
+        frames = self.current_frames
+        if not frames:
+            return
+        self.current_frame %= len(frames)
+        now = pygame.time.get_ticks()
+        if self.moving and now - self.last_frame_time > self.frame_delay:
+            self.current_frame = (self.current_frame + 1) % len(frames)
+            self.last_frame_time = now
+        elif not self.moving:
+            self.current_frame = 0
+
+    def draw(self, surface, camera):
+        frames = self.current_frames()
+        sprite = frames[self.current_frame]
+        sx, sy =  camera.world_to_screen(self.wx, self.wy)
+        rect = sprite.get_rect(midbottom=(sx, sy + 20)) # change adjustment later
+        surface.blit(sprite, rect)
