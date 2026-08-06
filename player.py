@@ -7,10 +7,15 @@ import pygame
 class Player:
     speed = 3
     frame_delay = 150
+    # how far below the tile centre the sprite's feet sit on screen; also
+    # shifts the depth-sort anchor so the tile under the feet is drawn first.
+    feet_offset = 20
 
     def __init__(self, wx, wy, animations):
         self.wx = float(wx)
         self.wy = float(wy)
+        self.fx = self.wx
+        self.fy = self.wy
 
         self.rect = pygame.Rect(0, 0, 30, 30)
         self.rect.center = (int(self.wx), int(self.wy))
@@ -28,36 +33,45 @@ class Player:
         self.max_health = 100
         self.inventory = []
 
-    def handle_input(self):
+    def handle_input(self, keys):
         up = keys[pygame.K_w] or keys[pygame.K_UP]
         down = keys[pygame.K_s] or keys[pygame.K_DOWN]
         left = keys[pygame.K_a] or keys[pygame.K_LEFT]
         right = keys[pygame.K_d] or keys[pygame.K_RIGHT]
 
+        # map the keys onto the iso grid so W/A/S/D move the player straight
+        # up/left/down/right on screen instead of along the diagonal grid axes
         dx = dy = 0
         self.moving = False
+        if up:
+            dx -= 1
+            dy -= 1
+            self.moving = True
+        if down:
+            dx += 1
+            dy += 1
+            self.moving = True
         if left:
-            dx -= self.speed
+            dx -= 1
+            dy += 1
             self.moving = True
         if right:
-            dx += self.speed
-            self.moving = True
-        if up:
-            dy -= self.speed
-            self.moving = True 
-        if down:
-            dy += self.speed
+            dx += 1
+            dy -= 1
             self.moving = True
 
-        if dx != 0 and dy != 0:
-            dx * 0.7071
-            dy * 0.7071
+        if dx != 0 or dy != 0:
+            length = (dx * dx + dy * dy) ** 0.5
+            dx = dx / length * self.speed
+            dy = dy / length * self.speed
 
         if self.moving:
             if up and not down and not left and not right:
                 self.facing = "back"
-            elif down and not up and not left and not right =:
+                self.facing_left = False
+            elif down and not up and not left and not right:
                 self.facing = "front"
+                self.facing_left = False
             elif left and not right and not up and not down:
                 self.facing = "side"
                 self.facing_left = True
@@ -80,36 +94,55 @@ class Player:
         return dx,dy
 
     def move(self, dx, dy, solid_rects):
-        self.rect.x += int(dx)
+        self.fx += dx
+        self.rect.centerx = int(self.fx)
+        hit = False
         for tile in solid_rects:
             if self.rect.colliderect(tile):
+                hit = True
                 if dx > 0:
                     self.rect.right = tile.left
                 elif dx < 0:
                     self.rect.left = tile.right
+        if hit:
+            self.fx = float(self.rect.centerx)
 
-        self.rect.y += int(dy)
+        self.fy += dy
+        self.rect.centery = int(self.fy)
+        hit = False
         for tile in solid_rects:
             if self.rect.colliderect(tile):
+                hit = True
                 if dy > 0:
                     self.rect.bottom = tile.top
                 elif dy < 0:
                     self.rect.top = tile.bottom
+        if hit:
+            self.fy = float(self.rect.centery)
 
         self.wx, self.wy = self.rect.centerx, self.rect.centery
 
     def teleport_to(self, wx, wy):
         self.wx, self.wy = float(wx), float(wy)
+        self.fx, self.fy = self.wx, self.wy
         self.rect.center = (int(self.wx), int(self.wy))
+
+    @property
+    def feet_wx(self):
+        return self.wx + self.feet_offset
+
+    @property
+    def feet_wy(self):
+        return self.wy + self.feet_offset
 
     def current_frames(self):
         key = self.facing
         if self.facing in ("side", "backside", "frontside") and self.facing_left:
             key = key + "_left"
-        return self.animations.get(key, self.animation["front"])
+        return self.animations.get(key, self.animations["front"])
 
     def update_animation(self):
-        frames = self.current_frames
+        frames = self.current_frames()
         if not frames:
             return
         self.current_frame %= len(frames)
@@ -123,6 +156,6 @@ class Player:
     def draw(self, surface, camera):
         frames = self.current_frames()
         sprite = frames[self.current_frame]
-        sx, sy =  camera.world_to_screen(self.wx, self.wy)
-        rect = sprite.get_rect(midbottom=(sx, sy + 20)) # change adjustment later
+        sx, sy = camera.world_to_screen(self.wx, self.wy)
+        rect = sprite.get_rect(midbottom=(sx, sy + self.feet_offset))
         surface.blit(sprite, rect)
