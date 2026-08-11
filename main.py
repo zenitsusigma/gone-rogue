@@ -172,7 +172,8 @@ while playing:
     # renders on top of their standing tile and everything farther away
     # (north-west), but is occluded by tiles closer to the camera (south-east).
     screen.fill((15, 15, 20))
-    player_depth = floor.draw_behind_player(screen, camera, player.feet_wx, player.feet_wy)
+    player_depth = floor.draw_behind_player(
+        screen, camera, player.feet_wx, player.feet_wy, player.wx, player.wy)
     player.draw(screen, camera)
     floor.draw_in_front_of_player(screen, camera, player_depth)
 
