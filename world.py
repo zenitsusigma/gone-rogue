@@ -78,6 +78,7 @@ DESK_MUG = {"blue": 39, "yellow": 40, "red": 41, "green": 42}
 DESK_PAPER = {"note1": 44, "note2": 45, "note3": 46, "blank": 47}
 DESK_CHEESE = 43
 DESK_PLANT = {"sunflower": 35, "small": 36, "tulip": 37, "leafy": 38}
+DESK_PLANT_SCALE = 0.65
 DESK_KEYBOARD = 48
 
 WALL_DECOR_RIGHT = {"portrait_a": 23, "portrait_b": 25, "sign": 27, "poster": 29}
@@ -97,6 +98,26 @@ def compose_layers(*indices):
     combo = pygame.Surface((32, 32), pygame.SRCALPHA)
     for idx in indices:
         combo.blit(_load_tile(idx), (0, 0))
+    return combo
+
+def compose_layer_scaled(base_idx, decor_idx, decor_scale):
+    """Like compose_layers, but shrinks one decor layer first, anchored on
+    its own bottom-centre so it stays "planted" in roughly the same spot
+    instead of shrinking toward the canvas centre. Used for the plant art,
+    which was drawn at a noticeably larger scale than the rest of the desk
+    decor."""
+    base = _load_tile(base_idx)
+    decor = _load_tile(decor_idx)
+    bbox = decor.get_bounding_rect()
+    anchor_x, anchor_y = bbox.centerx, bbox.bottom
+    new_w = max(1, int(decor.get_width() * decor_scale))
+    new_h = max(1, int(decor.get_height() * decor_scale))
+    decor_small = pygame.transform.scale(decor, (new_w, new_h))
+    paste_x = int(anchor_x - anchor_x * decor_scale)
+    paste_y = int(anchor_y - anchor_y * decor_scale)
+    combo = pygame.Surface((32, 32), pygame.SRCALPHA)
+    combo.blit(base, (0, 0))
+    combo.blit(decor_small, (paste_x, paste_y))
     return combo
 
 def _scale_prop(raw_surface):
@@ -154,6 +175,10 @@ def init_tile_images():
     for paper_name, idx in DESK_PAPER.items():
         props[f"table_paper_{paper_name}"] = _scale_prop(compose_layers(PROP_TABLE, idx))
     props["table_cheese"] = _scale_prop(compose_layers(PROP_TABLE, DESK_CHEESE))
+    for plant_name, idx in DESK_PLANT.items():
+        props[f"table_plant_{plant_name}"] = _scale_prop(
+            compose_layer_scaled(PROP_TABLE, idx, DESK_PLANT_SCALE))
+    props["table_keyboard"] = _scale_prop(compose_layers(PROP_TABLE, DESK_KEYBOARD))
     _tile_cache["props"] = props
 
 
