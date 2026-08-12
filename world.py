@@ -1,3 +1,4 @@
+from pathlib import Path
 import random
 import copy
 import pygame
@@ -36,7 +37,7 @@ template_pillars = [
     [2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2],
     [2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
 ]
- 
+
 template_l_shape = [
     [0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2],
     [0, 0, 0, 0, 0, 0, 2, 1, 1, 1, 1, 2],
@@ -51,54 +52,126 @@ template_l_shape = [
 
 room_template = [template_rect_arena, template_pillars, template_l_shape]
 
-floor_colour = (70, 70, 90)
-floor_line_colour = (50, 50, 65)
-wall_top_colour = (110, 110, 130)
-wall_left_colour  = (75, 75, 92)
-wall_right_colour = (60, 60, 75)
 elevator_locked_colour = (150, 60, 60)
 elevator_open_colour = (210, 180, 60)
-elevator_door_frame_colour = (35, 35, 42)
 elevator_indicator_locked = (220, 70, 70)
 elevator_indicator_open = (90, 220, 90)
 
-def draw_iso_floor_tile(surface, cx, cy, colour):
-    points = [
-        (cx, cy - tile_h // 2),
-        (cx + tile_w // 2, cy),
-        (cx, cy + tile_h // 2),
-        (cx - tile_w // 2, cy),
-    ]
-    pygame.draw.polygon(surface, colour, points)
-    pygame.draw.polygon(surface, floor_line_colour, points, 1)
+TILE_ASSET_DIR = Path(__file__).resolve().parent / "assets" / "images" / "tiles"
+
+FLOOR_TILE_INDICES = [31, 32, 33]
+WALL_FACE_INDEX = 21
+
+ELEVATOR_ANIM_DURATION = 500
+ELEVATOR_DOOR_STAGE_INDICES = [
+    (13, 14),   # closed / idle
+    (15, 16),   # opening, stage 1
+    (17, 18),   # opening, stage 2
+    (19, 20),   # fully open
+]
+
+PROP_CRATE, PROP_TABLE, PROP_DRAWERS = 2, 7, 8
+PROP_CHAIR_BOTTOM, PROP_CHAIR_TOP = 9, 10
+PROP_CABINET_BOTTOM, PROP_CABINET_TOP = 12, 11
+
+DESK_MUG = {"blue": 39, "yellow": 40, "red": 41, "green": 42}
+DESK_PAPER = {"note1": 44, "note2": 45, "note3": 46, "blank": 47}
+DESK_CHEESE = 43
+DESK_PLANT = {"sunflower": 35, "small": 36, "tulip": 37, "leafy": 38}
+DESK_KEYBOARD = 48
+
+WALL_DECOR_RIGHT = {"portrait_a": 23, "portrait_b": 25, "sign": 27, "poster": 29}
+WALL_DECOR_LEFT = {"portrait_a": 24, "portrait_b": 26, "sign": 28, "poster": 30}
+
+_tile_cache = {}
+
+def _load_tile(index):
+    path = TILE_ASSET_DIR / f"sprite_{index:02d}.png"
+    return pygame.image.load(str(path)).convert_alpha()
+
+def compose_layers(*indices):
+    """Stack tile layers drawn in the same 32x32 coordinate space directly on
+    top of each other, no offset -- this is the chair/cabinet/desk-decor
+    technique: each layer is the same drawing with some parts erased to
+    transparent, so overlaying at (0,0) reassembles the original."""
+    combo = pygame.Surface((32, 32), pygame.SRCALPHA)
+    for idx in indices:
+        combo.blit(_load_tile(idx), (0, 0))
+    return combo
+
+def _scale_prop(raw_surface):
+    scale = tile_w / 32
+    size = (int(32 * scale), int(32 * scale))
+    return pygame.transform.scale(raw_surface, size)
+
+def _face_crop(index, left_half):
+    region = pygame.Rect(0, 8, 16, 24) if left_half else pygame.Rect(16, 8, 16, 24)
+    return _load_tile(index).subsurface(region)
+
+def init_tile_images():
+    """Load and pre-scale every tile image. MUST be called once, AFTER
+    pygame.display.set_mode() -- convert_alpha() needs a display to exist."""
+    if _tile_cache:
+        return
+
+    floor_surfaces = []
+    for idx in FLOOR_TILE_INDICES:
+        cropped = _load_tile(idx).subsurface(pygame.Rect(0, 0, 32, 16))
+        floor_surfaces.append(pygame.transform.scale(cropped, (tile_w, tile_h)))
+    _tile_cache["floor"] = floor_surfaces
+
+    size = (tile_w // 2, wall_height + tile_h // 2)
+    left_img = pygame.transform.scale(_face_crop(WALL_FACE_INDEX, True), size)
+    _tile_cache["wall_left"] = left_img
+    _tile_cache["wall_right"] = pygame.transform.flip(left_img, True, False)
+
+    def door_stage(bottom_idx, top_idx):
+        b = _load_tile(bottom_idx).subsurface(pygame.Rect(0, 8, 16, 24))
+        t = _load_tile(top_idx).subsurface(pygame.Rect(0, 8, 16, 24))
+        combined = pygame.Surface((16, 32), pygame.SRCALPHA)
+        combined.blit(t, (0, 0))
+        combined.blit(b, (0, 8))
+        return pygame.transform.scale(combined, size)
+
+    _tile_cache["door_stages"] = [door_stage(b, t) for b, t in ELEVATOR_DOOR_STAGE_INDICES]
+
+    wall_decor = {}
+    for name, idx in WALL_DECOR_RIGHT.items():
+        wall_decor[("right", name)] = pygame.transform.scale(_face_crop(idx, True), size)
+    for name, idx in WALL_DECOR_LEFT.items():
+        wall_decor[("left", name)] = pygame.transform.scale(_face_crop(idx, False), size)
+    _tile_cache["wall_decor"] = wall_decor
+
+    props = {
+        "crate": _scale_prop(_load_tile(PROP_CRATE)),
+        "table": _scale_prop(_load_tile(PROP_TABLE)),
+        "drawers": _scale_prop(_load_tile(PROP_DRAWERS)),
+        "chair": _scale_prop(compose_layers(PROP_CHAIR_BOTTOM, PROP_CHAIR_TOP)),
+        "cabinet": _scale_prop(compose_layers(PROP_CABINET_BOTTOM, PROP_CABINET_TOP)),
+    }
+    for mug_name, idx in DESK_MUG.items():
+        props[f"table_mug_{mug_name}"] = _scale_prop(compose_layers(PROP_TABLE, idx))
+    for paper_name, idx in DESK_PAPER.items():
+        props[f"table_paper_{paper_name}"] = _scale_prop(compose_layers(PROP_TABLE, idx))
+    props["table_cheese"] = _scale_prop(compose_layers(PROP_TABLE, DESK_CHEESE))
+    _tile_cache["props"] = props
+
+
+def draw_iso_floor_tile(surface, cx, cy, variant):
+    img = _tile_cache["floor"][variant]
+    surface.blit(img, img.get_rect(center=(cx, cy)))
 
 def draw_iso_wall_tile(surface, cx, cy, height=wall_height):
     top = [
-        (cx, cy - tile_h // 2 - height),
-        (cx + tile_w // 2, cy - height),
-        (cx, cy + tile_h // 2 - height),
-        (cx - tile_w // 2, cy - height),
+        (cx, cy - tile_h // 2 - height), (cx + tile_w // 2, cy - height),
+        (cx, cy + tile_h // 2 - height), (cx - tile_w // 2, cy - height),
     ]
-    left_face = [
-        (cx - tile_w // 2, cy - height), (cx, cy + tile_h // 2 - height),
-        (cx, cy + tile_h // 2), (cx - tile_w // 2, cy),
-    ]
-    right_face = [
-        (cx, cy + tile_h // 2 - height), (cx + tile_w // 2, cy - height),
-        (cx + tile_w // 2, cy), (cx, cy + tile_h // 2),
-    ]
-    pygame.draw.polygon(surface, wall_left_colour, left_face)
-    pygame.draw.polygon(surface, wall_right_colour, right_face)
-    pygame.draw.polygon(surface, wall_top_colour, top)
+    pygame.draw.polygon(surface, (110, 110, 130), top)
     pygame.draw.polygon(surface, (20, 20, 25), top, 1)
+    surface.blit(_tile_cache["wall_left"], (cx - tile_w // 2, cy - height))
+    surface.blit(_tile_cache["wall_right"], (cx, cy - height))
 
-def _shade_colour(colour, factor):
-    return tuple(max(0, min(255, int(c * factor))) for c in colour)
-
-def draw_elevator_door(surface, cx, cy, side, locked):
-    # draw an elevator door on one vertical face of a wall tile centred at
-    # (cx, cy). `side` is the compass direction of the elevator relative to
-    # the wall, so the door is drawn on the face that faces the elevator.
+def draw_elevator_door(surface, cx, cy, side, stage, locked):
     h = wall_height
     half = tile_h // 2
     tw = tile_w // 2
@@ -116,40 +189,20 @@ def draw_elevator_door(surface, cx, cy, side, locked):
         p0t, p1t = (cx, cy - half - h), (cx - tw, cy - h)
         p0b, p1b = (cx, cy - half), (cx - tw, cy)
 
-    def top(u):
-        return (p0t[0] + (p1t[0] - p0t[0]) * u, p0t[1] + (p1t[1] - p0t[1]) * u)
+    xs = [p0t[0], p1t[0], p0b[0], p1b[0]]
+    ys = [p0t[1], p1t[1], p0b[1], p1b[1]]
+    x0, y0 = min(xs), min(ys)
+    w = max(1, int(max(xs) - x0))
+    hgt = max(1, int(max(ys) - y0))
 
-    def bottom(u):
-        return (p0b[0] + (p1b[0] - p0b[0]) * u, p0b[1] + (p1b[1] - p0b[1]) * u)
+    img = _tile_cache["door_stages"][stage]
+    surface.blit(pygame.transform.scale(img, (w, hgt)), (int(x0), int(y0)))
 
-    u0, u1 = 0.28, 0.72
-    mid = (u0 + u1) / 2
-    inset = 3
-
-    recess = [top(u0), top(u1), bottom(u1), bottom(u0)]
-    pygame.draw.polygon(surface, elevator_door_frame_colour, recess)
-
-    def shift(point, dy):
-        return (point[0], point[1] + dy)
-
-    panel_a = [shift(top(u0), inset), shift(top(mid), inset),
-               shift(bottom(mid), -inset), shift(bottom(u0), -inset)]
-    panel_b = [shift(top(mid), inset), shift(top(u1), inset),
-               shift(bottom(u1), -inset), shift(bottom(mid), -inset)]
-
-    colour = elevator_locked_colour if locked else elevator_open_colour
-    pygame.draw.polygon(surface, _shade_colour(colour, 0.85), panel_a)
-    pygame.draw.polygon(surface, colour, panel_b)
-    pygame.draw.polygon(surface, elevator_door_frame_colour, recess, 2)
-
-    seam_a = shift(top(mid), inset)
-    seam_b = shift(bottom(mid), -inset)
-    pygame.draw.line(surface, elevator_door_frame_colour, seam_a, seam_b, 1)
-
-    light = shift(top(mid), inset + 5)
+    light_x = p0t[0] + (p1t[0] - p0t[0]) * 0.5
+    light_y = p0t[1] + (p1t[1] - p0t[1]) * 0.5 + 10
     light_colour = elevator_indicator_locked if locked else elevator_indicator_open
-    pygame.draw.circle(surface, light_colour,
-                       (int(light[0]), int(light[1])), 3)
+    pygame.draw.circle(surface, light_colour, (int(light_x), int(light_y)), 3)
+
 
 class Floor:
     def __init__(self):
@@ -157,6 +210,7 @@ class Floor:
         self.cols = 0
         self.rows = 0
         self.elevator_locked = True
+        self.elevator_open_start = None
         self.build()
 
     def build(self):
@@ -164,13 +218,18 @@ class Floor:
         self.rows = len(self.grid)
         self.cols = len(self.grid[0])
         self.elevator_locked = True
+        self.elevator_open_start = None
+        self.floor_variant = [[random.randrange(len(FLOOR_TILE_INDICES))
+                                for _ in range(self.cols)] for _ in range(self.rows)]
+        self.props = []
+        self.wall_decor = []
 
     def find_spawn_point(self):
         for row in range(self.rows):
             for col in range(self.cols):
                 if self.grid[row][col] == floor:
                     return (col + 0.5) * tile_size, (row + 0.5) * tile_size
-        return tile_size * 2, tile_size * 2 # fallback
+        return tile_size * 2, tile_size * 2
 
     def tile_at(self, wx, wy):
         col = int(wx // tile_size)
@@ -202,9 +261,6 @@ class Floor:
         return False
 
     def try_unlock_elevator(self, player_rect):
-        # unlock the elevator when the player stands on or next to it. the
-        # elevator pad is always walkable; the closed door beside it is what
-        # blocks the player until they press the button.
         if not self.elevator_locked:
             return False
         px, py = player_rect.center
@@ -216,22 +272,26 @@ class Floor:
                 ty = row * tile_size + tile_size // 2
                 if abs(px - tx) <= tile_size and abs(py - ty) <= tile_size:
                     self.elevator_locked = False
+                    self.elevator_open_start = pygame.time.get_ticks()
                     return True
         return False
 
+    def _elevator_anim_progress(self):
+        if self.elevator_locked or self.elevator_open_start is None:
+            return 0.0
+        elapsed = pygame.time.get_ticks() - self.elevator_open_start
+        return min(1.0, elapsed / ELEVATOR_ANIM_DURATION)
+
+    def _elevator_stage(self):
+        if self.elevator_locked:
+            return 0
+        return min(3, int(self._elevator_anim_progress() * 4))
+
     def draw(self, surface, camera, player_depth=None):
-        # player_depth = the row+col of the tile the player is standing on.
-        # Everything the player renders on top of is drawn first: all
-        # floor/elevator tiles (the player always stands on the ground, so
-        # ground never covers them) plus walls at or behind the player's
-        # depth. The caller draws the player here. Then walls closer to the
-        # camera (south-east) are drawn so they occlude the player.
         for row, col in self._tiles_in_order():
             if player_depth is not None and row + col > player_depth and self.grid[row][col] == wall:
                 continue
             self._draw_tile(surface, camera, row, col)
-
-        # caller draws the player here
 
         if player_depth is not None:
             for row, col in self._tiles_in_order():
@@ -241,20 +301,6 @@ class Floor:
                     self._draw_tile(surface, camera, row, col)
 
     def draw_behind_player(self, surface, camera, wx, wy, cx, cy):
-        # everything the player renders on top of: all floor/elevator tiles
-        # (the player always stands on the ground, so ground never covers
-        # them) plus walls at or behind the player's depth. drawn before the
-        # player so their feet sit on their own tile and far walls render
-        # underneath them.
-        #
-        # (wx, wy) is the sprite's visual feet point, a fraction of a tile
-        # south-east of the player's centre (cx, cy). Normally both land in the
-        # same tile, but when the player presses against a wall the feet point
-        # can cross into the wall tile; anchoring the depth there would make
-        # that wall render *behind* the player. Fall back to the tile under the
-        # player's centre so walls in front still occlude them. Ground tiles
-        # (floor/elevator) keep the feet tile so the player draws on top of
-        # them.
         player_depth = self._anchor_depth(wx, wy, cx, cy)
         for row, col in self._tiles_in_order():
             if player_depth is not None and row + col > player_depth and self.grid[row][col] == wall:
@@ -269,11 +315,6 @@ class Floor:
         return tile[0] + tile[1] if tile else None
 
     def draw_in_front_of_player(self, surface, camera, player_depth):
-        # walls closer to the camera than the player (south-east) are drawn
-        # after the player so they occlude them. nothing else is drawn in
-        # front, so ground tiles (floor/elevator) never cover the player.
-        # when player_depth is None (player is off the map) draw nothing so the
-        # player stays visible.
         if player_depth is None:
             return
         for row, col in self._tiles_in_order():
@@ -295,17 +336,19 @@ class Floor:
         wx = (col + 0.5) * tile_size
         wy = (row + 0.5) * tile_size
         cx, cy = camera.world_to_screen(wx, wy)
+        variant = self.floor_variant[row][col]
         if tile == floor:
-            draw_iso_floor_tile(surface, cx, cy, floor_colour)
+            draw_iso_floor_tile(surface, cx, cy, variant)
         elif tile == elevator:
-            draw_iso_floor_tile(surface, cx, cy, floor_colour)
+            draw_iso_floor_tile(surface, cx, cy, variant)
             self._draw_elevator_pad(surface, cx, cy)
             if not self._has_adjacent_wall(row, col):
                 self._draw_free_standing_door(surface, cx, cy)
         elif tile == wall:
-            draw_iso_floor_tile(surface, cx, cy, floor_colour)
+            draw_iso_floor_tile(surface, cx, cy, variant)
             draw_iso_wall_tile(surface, cx, cy)
             self._draw_wall_elevator_doors(surface, camera, row, col)
+            self._draw_wall_decor(surface, cx, cy, row, col)
 
     def _draw_elevator_pad(self, surface, cx, cy):
         colour = elevator_locked_colour if self.elevator_locked else elevator_open_colour
@@ -332,7 +375,7 @@ class Floor:
                 wx = (col + 0.5) * tile_size
                 wy = (row + 0.5) * tile_size
                 cx, cy = camera.world_to_screen(wx, wy)
-                draw_elevator_door(surface, cx, cy, side, self.elevator_locked)
+                draw_elevator_door(surface, cx, cy, side, self._elevator_stage(), self.elevator_locked)
 
     def _has_adjacent_wall(self, row, col):
         for drow, dcol in ((row - 1, col), (row + 1, col), (row, col - 1), (row, col + 1)):
@@ -341,87 +384,29 @@ class Floor:
         return False
 
     def _draw_free_standing_door(self, surface, cx, cy):
-        draw_elevator_door(surface, cx, cy, "north", self.elevator_locked)
+        draw_elevator_door(surface, cx, cy, "north", self._elevator_stage(), self.elevator_locked)
 
-if __name__ == "__main__":
-    from camera import Camera
- 
-    pygame.init()
-    sw, sh = 800, 600
-    screen = pygame.display.set_mode((sw, sh))
-    pygame.display.set_caption("Gone Rogue - Map Generation Test")
-    clock = pygame.time.Clock()
-    font = pygame.font.SysFont(None, 26)
+    def add_prop(self, row, col, name):
+        if 0 <= row < self.rows and 0 <= col < self.cols and self.grid[row][col] == floor:
+            self.props.append((row, col, name))
 
-    floor = Floor()
-    player_wx, player_wy = floor.find_spawn_point()
-    player_rect = pygame.Rect(0, 0, 30, 30)
-    player_rect.center = (int(player_wx), int(player_wy))
-    camera = Camera(sw, sh, tile_size, tile_w, tile_h)
-    floor_number = 1
-    speed = 4
+    def draw_props(self, surface, camera):
+        for row, col, name in self.props:
+            wx, wy = (col + 0.5) * tile_size, (row + 0.5) * tile_size
+            cx, cy = camera.world_to_screen(wx, wy)
+            img = _tile_cache["props"][name]
+            surface.blit(img, img.get_rect(midbottom=(cx, cy + tile_h // 2)))
 
-    running = True
-    while running:
-        clock.tick(60)
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                if event.key == pygame.K_u:
-                    floor.elevator_locked = not floor.elevator_locked
+    def add_wall_decor(self, row, col, side, name):
+        if 0 <= row < self.rows and 0 <= col < self.cols and self.grid[row][col] == wall:
+            self.wall_decor.append((row, col, side, name))
 
-        keys = pygame.key.get_pressed()
-        dx = dy = 0
-        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            dx -= speed
-        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            dx += speed
-        if keys[pygame.K_w] or keys[pygame.K_UP]:
-            dy -= speed
-        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            dy += speed
-        if dx != 0 and dy != 0:
-            dx *= 0.7071
-            dy *= 0.7071
-
-        solid_rects = floor.get_solid_rects()
-        player_rect.x += int(dx)
-        for tile in solid_rects:
-            if player_rect.colliderect(tile):
-                if dx > 0: player_rect.right = tile.left
-                elif dx < 0: player_rect.left = tile.right
-        player_rect.y += int(dy)
-        for tile in solid_rects:
-            if player_rect.colliderect(tile):
-                if dy > 0: player_rect.bottom = tile.top
-                elif dy < 0: player_rect.top = tile.bottom
-        player_wx, player_wy = player_rect.centerx, player_rect.centery
- 
-        if floor.check_elevator(player_rect):
-            floor_number += 1
-            floor.build()
-            player_wx, player_wy = floor.find_spawn_point()
-            player_rect.center = (int(player_wx), int(player_wy))
-
-        camera.update(player_wx, player_wy)
- 
-        screen.fill((15, 15, 20))
-        floor.draw(screen, camera)
- 
-        psx, psy = camera.world_to_screen(player_wx, player_wy)
-        pygame.draw.circle(screen, (0, 220, 220), (psx, psy - 10), 12)
-        pygame.draw.circle(screen, (255, 255, 255), (psx, psy - 10), 12, 2)
- 
-        lock_state = "LOCKED" if floor.elevator_locked else "OPEN"
-        label = font.render(
-            f"Floor {floor_number}  |  Elevator: {lock_state}  |  "
-            f"WASD move, U toggles elevator (debug), Esc quit",
-            True, (255, 255, 255))
-        screen.blit(label, (10, 10))
- 
-        pygame.display.flip()
-
-    pygame.quit()
+    def _draw_wall_decor(self, surface, cx, cy, row, col):
+        for drow, dcol, side, name in self.wall_decor:
+            if (drow, dcol) != (row, col):
+                continue
+            img = _tile_cache["wall_decor"][(side, name)]
+            if side == "left":
+                surface.blit(img, (cx - tile_w // 2, cy - wall_height))
+            else:
+                surface.blit(img, (cx, cy - wall_height))
