@@ -6,7 +6,7 @@ import pygame
 import sys
 
 from player import Player
-from world import Floor, init_tile_images
+from world import Floor, init_tile_images, OffsetTuner
 from camera import Camera
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -142,6 +142,8 @@ floor.add_wall_decor(0, 3, "left", "sign")
 player = Player(*floor.find_spawn_point(), animations)
 floor_number = 1
 font = pygame.font.SysFont(None, 26)
+tuner = OffsetTuner()
+tuner_font = pygame.font.SysFont("consolas", 16) or pygame.font.SysFont(None, 18)
 
 # player loop
 playing = True
@@ -152,6 +154,7 @@ while playing:
         if event.type == pygame.QUIT:
             playing = False
         elif event.type == pygame.KEYDOWN:
+            tuner.handle_key(event.key, event.mod)
             if event.key == pygame.K_e:
                 floor.try_unlock_elevator(player.rect)
             elif event.key == pygame.K_ESCAPE:
@@ -168,12 +171,13 @@ while playing:
                 player.reset_death()
 
     keys = pygame.key.get_pressed()
-    if player.dying:
+    if player.dying or tuner.active:
         player.moving = False
     else:
         dx, dy = player.handle_input(keys)
         player.move(dx, dy, floor.get_solid_rects())
     player.update_animation()
+    tuner.update()
 
     if floor.check_elevator(player.rect):
         floor_number += 1
@@ -186,7 +190,6 @@ while playing:
     player_depth = floor.draw_behind_player(screen, camera, player.feet_wx, player.feet_wy, player.wx, player.wy)
     player.draw(screen, camera)
     floor.draw_in_front_of_player(screen, camera, player_depth)
-    floor.draw_props(screen, camera)
 
     elevator_state = "LOCKED" if floor.elevator_locked else "OPEN"
     label = font.render(
@@ -194,6 +197,7 @@ while playing:
         f"WASD/arrows move, E opens the elevator, Esc quits",
         True, (255, 255, 255))
     screen.blit(label, (10, 10))
+    tuner.draw(screen, tuner_font)
 
     pygame.display.flip()
 
