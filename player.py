@@ -4,7 +4,7 @@ My player class!!!
 
 import pygame
 
-from bullet import Bullet, WEAPON_STATS, FIRE_DIRECTIONS
+from bullet import Bullet, WEAPON_STATS, FIRE_DIRECTIONS, flash_tint
 
 class Player:
     speed = 3
@@ -14,6 +14,10 @@ class Player:
     # tile centre, which keeps the tall sprite from overlapping the tiles
     # south-east of the player (so side walls no longer cover the character).
     feet_offset = 0
+
+    # combat feedback timing (ms)
+    HURT_FLASH_MS = 150
+    INVINCIBLE_MS = 500
 
     def __init__(self, wx, wy, animations, bullet_frames=None):
         self.wx = float(wx)
@@ -37,9 +41,13 @@ class Player:
         # loading helpers live there) and passed in on construction.
         self.bullet_frames = bullet_frames
         self.last_fire_time = 0
+        self.firing = False
 
         self.current_frame = 0
         self.last_frame_time = pygame.time.get_ticks()
+        self._last_state = None# combat feedback state
+        self.hurt_until = 0
+        self.invincible_until = 0
 
         # stubs for inventory and health
         self.health = 100
@@ -139,6 +147,22 @@ class Player:
         if not self.dying:
             self.action = action
 
+    def take_damage(self, amount):
+        """Apply damage unless dying or still within the post-hit
+        invincibility window. Returns True if the hit actually landed."""
+        now = pygame.time.get_ticks()
+        if self.dying or now < self.invincible_until:
+            return False
+        self.health = max(0, self.health - amount)
+        self.hurt_until = now + self.HURT_FLASH_MS
+        self.invincible_until = now + self.INVINCIBLE_MS
+        if self.health <= 0:
+            self.play_death()
+        return True
+
+    def set_firing(self, firing):
+        self.firing = firing and not self.dying
+
     def fire(self, bullets):
         """Spawn a bullet in the direction the player is facing, if they are
         holding a gun, the fire-rate cooldown has passed, and the current
@@ -181,7 +205,7 @@ class Player:
     def _current_state(self):
         if self.dying:
             return "dying"
-        if self.action in ("pistol", "rifle"):
+        if self.firing and self.action in ("pistol", "rifle"):
             return self.action
         if self.moving:
             return "run"
@@ -206,6 +230,11 @@ class Player:
             return
         now = pygame.time.get_ticks()
 
+        if state != self._last_state:
+            self._last_state = state
+            self.current_frame = len(frames) - 1 if state in ("pistol", "rifle") else 0
+            self.last_frame_time = now
+
         if state == "dying":
             if self.current_frame < len(frames) - 1:
                 if now - self.last_frame_time > self.frame_delay:
@@ -213,6 +242,12 @@ class Player:
                     self.last_frame_time = now
             else:
                 self.death_done = True
+            return
+
+        if state in ("pistol", "rifle"):
+            # Snap straight to the ready pose and hold there -- no more
+            # replaying the "pull the gun out" frames every time you fire.
+            self.current_frame = len(frames) - 1
             return
 
         self.current_frame %= len(frames)
@@ -226,6 +261,8 @@ class Player:
     def draw(self, surface, camera):
         frames, _ = self.current_frames()
         sprite = frames[min(self.current_frame, len(frames) - 1)]
+        if pygame.time.get_ticks() < self.hurt_until:
+            sprite = flash_tint(sprite)
         sx, sy = camera.world_to_screen(self.wx, self.wy)
         rect = sprite.get_rect(midbottom=(sx, sy + self.feet_offset))
         surface.blit(sprite, rect)

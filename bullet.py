@@ -5,7 +5,35 @@ scene because they expose the same wx/wy + draw(surface, camera) interface the
 Floor.draw_scene() depth pass expects.
 """
 
+import math
 import pygame
+
+
+def aim_at(from_x, from_y, to_x, to_y):
+    """Normalised (vx, vy) unit vector from one world position to another."""
+    dx = to_x - from_x
+    dy = to_y - from_y
+    dist = math.hypot(dx, dy)
+    if dist == 0:
+        return 0.0, 1.0
+    return dx / dist, dy / dist
+
+
+# Matches Camera's projection (tile_w=128, tile_h=64 everywhere in this
+# project). vx/vy is a WORLD-space direction -- rotating the sprite by that
+# angle directly points it the wrong way, since iso projection isn't a
+# straight 1:1 rotation. Has to go through the same transform as the camera.
+_ISO_TILE_W = 128
+_ISO_TILE_H = 64
+
+
+def _iso_screen_angle(vx, vy):
+    """World-space direction -> degrees, matching how it actually looks on
+    screen after the isometric projection."""
+    screen_dx = (vx - vy) * (_ISO_TILE_W / 2)
+    screen_dy = (vx + vy) * (_ISO_TILE_H / 2)
+    return math.degrees(math.atan2(screen_dy, screen_dx))
+
 
 # Per-weapon tuning. fire_rate is the minimum ms between shots, bullet_speed is
 # world px moved per frame (the game runs at a fixed 60fps), bullet_lifetime is
@@ -34,17 +62,34 @@ FIRE_DIRECTIONS = {
 OFFSCREEN_MARGIN = 64
 
 
+def flash_tint(sprite, colour=(255, 60, 60)):
+    """Return a copy of sprite recoloured to a solid `colour`, keeping its
+    alpha shape (silhouette) intact -- used for the damage-flash on both the
+    player and enemies."""
+    tinted = sprite.copy()
+    tinted.fill((0, 0, 0, 255), special_flags=pygame.BLEND_RGBA_MULT)
+    tinted.fill(colour + (0,), special_flags=pygame.BLEND_RGBA_ADD)
+    return tinted
+
+
 class Bullet:
     frame_delay = 45  # ms between projectile frames
 
-    def __init__(self, wx, wy, vx, vy, frames, speed, lifetime, damage=10):
+    def __init__(self, wx, wy, vx, vy, frames, speed, lifetime, damage=10, frame_delay=None):
         self.wx = float(wx)
         self.wy = float(wy)
         self.vx = float(vx)
         self.vy = float(vy)
         self.speed = float(speed)
         self.damage = damage
-        self.frames = frames
+
+        # Rotated once here instead of every draw() call -- cheaper, and
+        # draw() itself needs no changes.
+        angle = _iso_screen_angle(self.vx, self.vy)
+        self.frames = [pygame.transform.rotate(f, -angle) for f in frames]
+
+        if frame_delay is not None:
+            self.frame_delay = frame_delay
         self.current_frame = 0
         self.last_frame_time = pygame.time.get_ticks()
         self.expire_at = self.last_frame_time + lifetime
@@ -56,7 +101,7 @@ class Bullet:
             self.current_frame = (self.current_frame + 1) % len(self.frames)
             self.last_frame_time = now
 
-    def update(self, camera):
+    def update(self, camera, solid_rects=()):
         if self.dead:
             return False
 
@@ -67,6 +112,12 @@ class Bullet:
         if pygame.time.get_ticks() >= self.expire_at:
             self.dead = True
             return False
+
+        # Stop on walls / solid props
+        for tile in solid_rects:
+            if tile.collidepoint(self.wx, self.wy):
+                self.dead = True
+                return False
 
         sx, sy = camera.world_to_screen(self.wx, self.wy)
         if (sx < -OFFSCREEN_MARGIN or sx > camera.sw + OFFSCREEN_MARGIN

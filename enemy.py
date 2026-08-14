@@ -1,27 +1,31 @@
 """
-Tier 1 enemy: the Faceless Worker. Wanders the floor and bounces off
-anything solid. No combat yet -- damage/incapacitation gets wired in once
-the weapon system exists.
+Tier 1-3 enemies.
 """
 
 import math
 import random
-
 import pygame
+from bullet import Bullet, aim_at, flash_tint
 
 
 class Enemy:
     speed = 1.4
     frame_delay = 130
-    size = 56  # must match the size passed into scale_frames() in main.py
+    size = 56
+    max_hp = 2
+
+    # combat feedback timing (ms)
+    HURT_FLASH_MS = 150
+    DEATH_FALL_MS = 250     # "lean back" phase
+    DEATH_FADE_MS = 500     # fade-out phase, after the lean
+    DEATH_LEAN_DEGREES = 65
 
     def __init__(self, wx, wy, animations, variant):
         self.wx = float(wx)
         self.wy = float(wy)
-        self.variant = variant           # "red" / "green" / "blue"
-        self.animations = animations     # {"idle","walk","idle_left","walk_left"}
+        self.variant = variant
+        self.animations = animations
 
-        # collision box a bit smaller than the sprite so it doesn't feel unfair
         hitbox = int(self.size * 0.5)
         self.rect = pygame.Rect(0, 0, hitbox, hitbox)
         self.rect.center = (int(self.wx), int(self.wy))
@@ -36,10 +40,14 @@ class Enemy:
 
         self.wander_timer = 0
         self._pick_new_direction()
-        self.hp = 2
+        self.hp = self.max_hp
+
+        # combat feedback state
+        self.hurt_until = 0
+        self.dying = False
+        self.death_start = None
 
     def _pick_new_direction(self):
-        """Roll either a short idle pause or a new wander direction."""
         if random.random() < 0.3:
             self.vx = self.vy = 0.0
             self.moving = False
@@ -53,7 +61,45 @@ class Enemy:
                 self.facing_left = self.vx < 0
             self.wander_timer = random.randint(90, 220)
 
-    def update(self, solid_rects):
+    def take_damage(self, amount):
+        """Apply damage. Triggers the death sequence at 0 HP instead of an
+        instant removal -- the caller keeps the enemy in its list until
+        is_removable() says the fall+fade animation has finished."""
+        if self.dying:
+            return
+        self.hp -= amount
+        if self.hp <= 0:
+            self.start_death()
+        else:
+            self.hurt_until = pygame.time.get_ticks() + self.HURT_FLASH_MS
+
+    def start_death(self):
+        self.dying = True
+        self.death_start = pygame.time.get_ticks()
+        self.moving = False
+        self.vx = self.vy = 0.0
+
+    def is_removable(self):
+        """True once the fall + fade sequence has fully played out -- only
+        then should the caller actually drop this enemy from its list."""
+        if not self.dying:
+            return False
+        now = pygame.time.get_ticks()
+        return now >= self.death_start + self.DEATH_FALL_MS + self.DEATH_FADE_MS
+
+    def _death_progress(self):
+        """Returns (lean_fraction 0-1, alpha 0-255) for the current moment
+        in the death sequence."""
+        now = pygame.time.get_ticks()
+        t = now - self.death_start
+        lean_t = max(0.0, min(1.0, t / self.DEATH_FALL_MS))
+        fade_t = max(0.0, min(1.0, (t - self.DEATH_FALL_MS) / self.DEATH_FADE_MS))
+        return lean_t, int(255 * (1.0 - fade_t))
+
+    def update(self, solid_rects, player=None, bullets_out=None):
+        if self.dying:
+            return
+
         self.wander_timer -= 1
         if self.wander_timer <= 0:
             self._pick_new_direction()
@@ -99,6 +145,172 @@ class Enemy:
     def draw(self, surface, camera):
         frames = self._frames()
         sprite = frames[min(self.current_frame, len(frames) - 1)]
+        now = pygame.time.get_ticks()
+        if self.dying:
+            lean_t, alpha = self._death_progress()
+            sprite = pygame.transform.rotate(sprite, -self.DEATH_LEAN_DEGREES * lean_t)
+            sprite = sprite.copy()
+            sprite.set_alpha(alpha)
+        elif now < self.hurt_until:
+            sprite = flash_tint(sprite)
         sx, sy = camera.world_to_screen(self.wx, self.wy)
+        rect = sprite.get_rect(midbottom=(sx, sy))
+        surface.blit(sprite, rect)
+
+
+class MiddleManager(Enemy):
+    speed = 1.0
+    max_hp = 3
+    detection_range = 260
+    fire_cooldown_ms = 1700
+    flash_ms = 180
+    clipboard_speed = 7.0
+    clipboard_lifetime = 1300
+    clipboard_damage = 8
+
+    def __init__(self, wx, wy, animations, variant, clipboard_frames):
+        super().__init__(wx, wy, animations, variant)
+        self.clipboard_frames = clipboard_frames
+        self.last_shot_time = 0
+        self.flash_until = 0
+        self.engaged = False
+
+    def update(self, solid_rects, player=None, bullets_out=None):
+        if self.dying:
+            return
+
+        in_range = False
+        if player is not None:
+            dist = ((player.wx - self.wx) ** 2 + (player.wy - self.wy) ** 2) ** 0.5
+            in_range = dist <= self.detection_range
+
+        self.engaged = in_range
+        if in_range:
+            self.moving = False
+            self.vx = self.vy = 0.0
+            self.facing_left = player.wx < self.wx
+            self._update_animation()
+            self._try_fire(player, bullets_out)
+        else:
+            super().update(solid_rects)
+
+    def _try_fire(self, player, bullets_out):
+        if bullets_out is None:
+            return
+        now = pygame.time.get_ticks()
+        if now - self.last_shot_time < self.fire_cooldown_ms:
+            return
+        self.last_shot_time = now
+        self.flash_until = now + self.flash_ms
+
+        vx, vy = aim_at(self.wx, self.wy, player.wx, player.wy)
+        bullets_out.append(Bullet(
+            self.wx, self.wy, vx, vy,
+            self.clipboard_frames,
+            self.clipboard_speed,
+            self.clipboard_lifetime,
+            damage=self.clipboard_damage,
+            frame_delay=180,
+        ))
+
+    def draw(self, surface, camera):
+        frames = self._frames()
+        sprite = frames[min(self.current_frame, len(frames) - 1)]
+        now = pygame.time.get_ticks()
+        if self.dying:
+            lean_t, alpha = self._death_progress()
+            sprite = pygame.transform.rotate(sprite, -self.DEATH_LEAN_DEGREES * lean_t)
+            sprite = sprite.copy()
+            sprite.set_alpha(alpha)
+        elif now < self.hurt_until:
+            sprite = flash_tint(sprite)
+        elif now < self.flash_until:
+            w, h = sprite.get_size()
+            sprite = pygame.transform.smoothscale(sprite, (int(w * 1.15), int(h * 1.15)))
+            bright = sprite.copy()
+            bright.fill((40, 40, 40, 0), special_flags=pygame.BLEND_RGBA_ADD)
+            sprite = bright
+        sx, sy = camera.world_to_screen(self.wx, self.wy)
+        rect = sprite.get_rect(midbottom=(sx, sy))
+        surface.blit(sprite, rect)
+
+
+class ExecutiveSummoner(Enemy):
+    max_hp = 5
+    speed = 0
+    detection_range = 320
+    summon_cooldown_ms = 4000
+    max_lifetime_summons = 4
+    flash_ms = 250
+
+    def __init__(self, wx, wy, animations, variant="executive"):
+        super().__init__(wx, wy, animations, variant)
+        self.engaged = False
+        self.last_summon_time = 0
+        self.summons_left = self.max_lifetime_summons
+        self.flash_until = 0
+        self.pending_summons = []
+
+    def update(self, solid_rects, player=None, bullets_out=None):
+        if self.dying:
+            return
+
+        self.moving = False
+        self.vx = self.vy = 0.0
+
+        if player is not None:
+            dist = ((player.wx - self.wx) ** 2 + (player.wy - self.wy) ** 2) ** 0.5
+            self.engaged = self.engaged or dist <= self.detection_range
+            if self.engaged:
+                self.facing_left = player.wx < self.wx
+
+        self._update_animation()
+        self._try_summon()
+
+    def _try_summon(self):
+        if not self.engaged or self.summons_left <= 0:
+            return
+        now = pygame.time.get_ticks()
+        if now - self.last_summon_time < self.summon_cooldown_ms:
+            return
+        self.last_summon_time = now
+        self.summons_left -= 1
+        self.flash_until = now + self.flash_ms
+        self.pending_summons.append((self.wx, self.wy))
+
+    def take_pending_summons(self):
+        summons, self.pending_summons = self.pending_summons, []
+        return summons
+
+    def _summon_progress(self):
+        if self.summons_left <= 0:
+            return 0.0
+        elapsed = pygame.time.get_ticks() - self.last_summon_time
+        return max(0.0, min(1.0, elapsed / self.summon_cooldown_ms))
+
+    def draw(self, surface, camera):
+        sx, sy = camera.world_to_screen(self.wx, self.wy)
+        now = pygame.time.get_ticks()
+
+        if not self.dying and self.summons_left > 0:
+            progress = self._summon_progress()
+            flashing = now < self.flash_until
+            radius = int(10 + progress * 22)
+            alpha = int(60 + progress * 120)
+            if flashing:
+                radius, alpha = 34, 200
+            glow = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (200, 60, 220, alpha), (radius, radius), radius)
+            surface.blit(glow, glow.get_rect(center=(sx, sy - 6)))
+
+        frames = self._frames()
+        sprite = frames[min(self.current_frame, len(frames) - 1)]
+        if self.dying:
+            lean_t, alpha = self._death_progress()
+            sprite = pygame.transform.rotate(sprite, -self.DEATH_LEAN_DEGREES * lean_t)
+            sprite = sprite.copy()
+            sprite.set_alpha(alpha)
+        elif now < self.hurt_until:
+            sprite = flash_tint(sprite)
         rect = sprite.get_rect(midbottom=(sx, sy))
         surface.blit(sprite, rect)

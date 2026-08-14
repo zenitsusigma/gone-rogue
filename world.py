@@ -226,8 +226,14 @@ def init_tile_images():
     _tile_cache["wall_left"] = left_img
     _tile_cache["wall_right"] = pygame.transform.flip(left_img, True, False)
     _tile_cache["wall_colour"] = _load_tile(WALL_FACE_INDEX).get_at((0, 8))
+    _tile_cache["wall_shadow_colour"] = tuple(
+        component * 72 // 100 for component in _tile_cache["wall_colour"][:3]
+    )
+    _tile_cache["wall_cap_colour"] = tuple(
+        component * 88 // 100 for component in _tile_cache["wall_colour"][:3]
+    )
     _tile_cache["wall_corner_colour"] = tuple(
-        component * 65 // 100 for component in _tile_cache["wall_colour"][:3]
+        component * 55 // 100 for component in _tile_cache["wall_colour"][:3]
     )
 
     # elevator doors -- each stage is a (bottom_face, top_face) PAIR of
@@ -287,59 +293,54 @@ def draw_iso_floor_tile(surface, cx, cy, variant):
     surface.blit(img, img.get_rect(center=(cx, cy)))
 
 
-def draw_iso_wall_tile(surface, cx, cy, faces=("left", "right"), tall=False):
-    """Draw wall faces from their exact shared floor edges.
-
-    The supplied wall art is a single flat-colour face.  Scaling and placing
-    its cropped rectangle made the art's diagonal disagree with the 2:1
-    isometric floor grid, creating gaps and floor overlap.  These polygons
-    preserve the same colour while using the floor diamond's true edges.
-    """
+def draw_iso_wall_tile(surface, cx, cy, faces=("left", "right"), tall=False, outer_corner=False):
+    """Draw wall faces from their exact shared floor edges, plus a top cap
+    whenever both faces are present (a genuine corner post). Without the
+    cap, the two sloped face-tops meet in a V-notch instead of a flat top
+    -- that notch is the "spike". outer_corner gets a bolder, darker line
+    so the room's true boundary reads clearly against interior corners."""
     height = BORDER_WALL_HEIGHT if tall else wall_height
     place_x = OFFSETS["wall_place_dx"] * TILE_SCALE
     place_y = OFFSETS["wall_place_dy"] * TILE_SCALE
-    colour = _tile_cache["wall_colour"]
+    lit_colour = _tile_cache["wall_colour"]
+    shadow_colour = _tile_cache["wall_shadow_colour"]
     cx += place_x
     cy += place_y
 
     v = _floor_vertices(cx, cy)
 
     if "left" in faces:
-        base_left = v["left"]
-        base_right = v["bottom"]
-        pygame.draw.polygon(
-            surface,
-            colour,
-            [
-                (base_left[0], base_left[1] - height),
-                (base_right[0], base_right[1] - height),
-                base_right,
-                base_left,
-            ],
-        )
+        base_left, base_right = v["left"], v["bottom"]
+        pygame.draw.polygon(surface, lit_colour, [
+            (base_left[0], base_left[1] - height),
+            (base_right[0], base_right[1] - height),
+            base_right, base_left,
+        ])
     if "right" in faces:
-        base_left = v["bottom"]
-        base_right = v["right"]
-        pygame.draw.polygon(
-            surface,
-            colour,
-            [
-                (base_left[0], base_left[1] - height),
-                (base_right[0], base_right[1] - height),
-                base_right,
-                base_left,
-            ],
-        )
+        base_left, base_right = v["bottom"], v["right"]
+        pygame.draw.polygon(surface, shadow_colour, [
+            (base_left[0], base_left[1] - height),
+            (base_right[0], base_right[1] - height),
+            base_right, base_left,
+        ])
     if "left" in faces and "right" in faces:
-        # This is the shared vertical fold of a real room corner.  It makes
-        # the turn legible without drawing segment lines along straight walls.
-        pygame.draw.line(
-            surface,
-            _tile_cache["wall_corner_colour"],
+        # Top cap: same diamond shape as a floor tile, translated up by
+        # `height`. This is what was missing -- closes the V-notch.
+        cap = [
+            (v["top"][0], v["top"][1] - height),
+            (v["right"][0], v["right"][1] - height),
             (v["bottom"][0], v["bottom"][1] - height),
-            v["bottom"],
-            2,
-        )
+            (v["left"][0], v["left"][1] - height),
+        ]
+        pygame.draw.polygon(surface, _tile_cache["wall_cap_colour"], cap)
+
+        line_colour = _tile_cache["wall_corner_colour"]
+        line_width = 3 if outer_corner else 2
+        pygame.draw.line(
+            surface, line_colour,
+            (v["bottom"][0], v["bottom"][1] - height), v["bottom"], line_width)
+        if outer_corner:
+            pygame.draw.lines(surface, line_colour, False, cap, 2)
 
 
 def draw_elevator_door(surface, cx, cy, face, stage, locked):
@@ -360,7 +361,7 @@ def draw_elevator_door(surface, cx, cy, face, stage, locked):
         top_face = pygame.transform.flip(top_face, True, False)
 
     anchor_x = (base_left[0] + base_right[0]) // 2
-    floor_y = base_left[1]
+    floor_y = (base_left[1] + base_right[1]) / 2  # true midpoint of the diagonal floor edge
 
     bottom_rect = bottom_face.get_rect(midbottom=(anchor_x, floor_y))
     surface.blit(bottom_face, bottom_rect)
@@ -666,7 +667,9 @@ class Floor:
             if not is_tall_wall:
                 draw_iso_floor_tile(surface, cx, cy, variant)
             if faces:
-                draw_iso_wall_tile(surface, cx, cy, faces=faces, tall=is_tall_wall)
+                draw_iso_wall_tile(
+                    surface, cx, cy, faces=faces, tall=is_tall_wall,
+                    outer_corner=self._is_outer_corner(row, col))
             self._draw_wall_decor(surface, cx, cy, row, col, is_tall_wall)
 
     def _draw_elevator_pad(self, surface, cx, cy):

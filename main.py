@@ -1,15 +1,14 @@
 # library imports
 import os
 from pathlib import Path
-
-import pygame
 import sys
+import random
+import pygame
 
 from player import Player
-from enemy import Enemy
+from enemy import Enemy, MiddleManager, ExecutiveSummoner
 from world import Floor, init_tile_images, OffsetTuner, tile_size, floor as FLOOR_TILE
 from camera import Camera
-import random
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 GAME_FONT_PATH = PROJECT_ROOT / "assets" / "fonts" / "Jersey10-Regular.ttf"
@@ -153,53 +152,109 @@ def build_worker_animations(variant):
 
 worker_animations = {variant: build_worker_animations(variant) for variant in WORKER_VARIANTS}
 
-BULLET_FRAME_SIZE = (40, 40)
+MIDDLE_MANAGER_SPRITE_SIZE = (60, 60)
+MIDDLE_MANAGER_COUNT_PER_FLOOR = 2
+EXECUTIVE_SPRITE_SIZE = (64, 64)
+EXECUTIVE_COUNT_PER_FLOOR = 1
+
+
+def build_middle_manager_animations():
+    folder = "assets/images/enemy/middle manager"
+    idle = scale_frames(load_indices(folder, [0]), size=MIDDLE_MANAGER_SPRITE_SIZE)
+    walk = scale_frames(load_indices(folder, [1, 2, 3, 4, 5, 6, 7, 8]), size=MIDDLE_MANAGER_SPRITE_SIZE)
+    return {
+        "idle": idle, "walk": walk,
+        "idle_left": mirror(idle), "walk_left": mirror(walk),
+    }
+
+
+middle_manager_animations = build_middle_manager_animations()
+
+
+def build_executive_animations():
+    folder = "assets/images/enemy/executive"
+    idle = scale_frames(load_indices(folder, [0]), size=EXECUTIVE_SPRITE_SIZE)
+    walk = scale_frames(load_indices(folder, [1, 2, 3, 4, 5, 6, 7, 8]), size=EXECUTIVE_SPRITE_SIZE)
+    return {
+        "idle": idle, "walk": walk,
+        "idle_left": mirror(idle), "walk_left": mirror(walk),
+    }
+
+
+executive_animations = build_executive_animations()
+
+
+def build_clipboard_frames(folder="assets/images/enemy/middle manager", size=(28, 28)):
+    """Two-frame clipboard-throw animation. Reuses sprite_09.png (normal) and
+    sprite_10.png (flipped) from the middle manager's own sprite sheet --
+    indices 9 and 10, right after the idle (0) and walk (1-8) frames used by
+    build_middle_manager_animations(). No separate clipboard folder needed,
+    and no risk of silently falling back to the magenta placeholder."""
+    return scale_frames(load_indices(folder, [9, 10]), size=size)
+
+
+clipboard_frames = build_clipboard_frames()
+
+BULLET_FRAME_SIZE = (32, 32)
+# Use only one sprite as the bullet. Change the index [7] if you prefer a different one.
 bullet_frames = scale_frames(
-    load_indices("assets/images/items/weapons", list(range(9))),
+    load_indices("assets/images/items/weapons", [7]),
     size=BULLET_FRAME_SIZE,
 )
 
 
-def spawn_workers(floor_obj, avoid_point, count=WORKER_COUNT_PER_FLOOR, min_distance=1.5):
-    """Place `count` workers on random floor tiles, skipping any tile too
-    close to `avoid_point` (the player's spawn) and any tile that already
-    has a solid prop on it."""
+def spawn_enemies(floor_obj, avoid_point):
+    """Spawn workers + middle managers + executive."""
     ax, ay = avoid_point
-    min_px = min_distance * tile_size
-    occupied = {(row, col) for row, col, _ in floor_obj.props}
-    candidates = []
-    for row in range(floor_obj.rows):
-        for col in range(floor_obj.cols):
-            if floor_obj.grid[row][col] != FLOOR_TILE:
-                continue
-            if (row, col) in occupied:
-                continue
-            wx = (col + 0.5) * tile_size
-            wy = (row + 0.5) * tile_size
-            if ((wx - ax) ** 2 + (wy - ay) ** 2) ** 0.5 < min_px:
-                continue
-            candidates.append((wx, wy))
+    min_px = 1.5 * tile_size
+    occupied_grid = {(row, col) for row, col, _ in floor_obj.props}
 
-    random.shuffle(candidates)
-    spawned = []
-    for wx, wy in candidates[:count]:
+    def open_tiles():
+        tiles = []
+        for row in range(floor_obj.rows):
+            for col in range(floor_obj.cols):
+                if floor_obj.grid[row][col] != FLOOR_TILE:
+                    continue
+                if (row, col) in occupied_grid:
+                    continue
+                wx = (col + 0.5) * tile_size
+                wy = (row + 0.5) * tile_size
+                if ((wx - ax) ** 2 + (wy - ay) ** 2) ** 0.5 < min_px:
+                    continue
+                tiles.append((row, col, wx, wy))
+        random.shuffle(tiles)
+        return tiles
+
+    workers = []
+    for row, col, wx, wy in open_tiles()[:WORKER_COUNT_PER_FLOOR]:
+        occupied_grid.add((row, col))
         variant = random.choice(WORKER_VARIANTS)
-        spawned.append(Enemy(wx, wy, worker_animations[variant], variant))
-    return spawned
+        workers.append(Enemy(wx, wy, worker_animations[variant], variant))
+
+    managers = []
+    for row, col, wx, wy in open_tiles()[:MIDDLE_MANAGER_COUNT_PER_FLOOR]:
+        occupied_grid.add((row, col))
+        managers.append(MiddleManager(wx, wy, middle_manager_animations, "manager", clipboard_frames))
+
+    executives = []
+    for row, col, wx, wy in open_tiles()[:EXECUTIVE_COUNT_PER_FLOOR]:
+        occupied_grid.add((row, col))
+        executives.append(ExecutiveSummoner(wx, wy, executive_animations))
+
+    return workers + managers + executives
 
 # character position
 floor = Floor()
 camera = Camera(800, 600, 64, 128, 64)
 # temporary demo props – delete later
-floor.add_prop(2, 2, "table_mug_blue")
-floor.add_prop(3, 2, "chair")
 floor.add_prop(4, 4, "crate")
 floor.add_prop(5, 2, "drawers")
 floor.add_wall_decor(0, 3, "left", "sign")
 spawn_point = floor.find_spawn_point()
 player = Player(*spawn_point, animations, bullet_frames)
-enemies = spawn_workers(floor, spawn_point)
+enemies = spawn_enemies(floor, spawn_point)
 bullets = []
+enemy_bullets = []
 floor_number = 1
 font = pygame.font.Font(str(GAME_FONT_PATH), 28)
 tuner = OffsetTuner()
@@ -311,24 +366,48 @@ while playing:
 
     if not tuner.active:
         fire_pressed = keys[pygame.K_SPACE] or pygame.mouse.get_pressed()[0]
+        player.set_firing(fire_pressed)
         if fire_pressed:
             player.fire(bullets)
 
-        for worker in enemies:
-            worker.update(solid_rects)
+        for enemy_unit in enemies:
+            enemy_unit.update(solid_rects, player, enemy_bullets)
 
+        # Drain summons from Executives
+        newly_summoned = []
+        for enemy_unit in enemies:
+            if isinstance(enemy_unit, ExecutiveSummoner):
+                for swx, swy in enemy_unit.take_pending_summons():
+                    variant = random.choice(WORKER_VARIANTS)
+                    newly_summoned.append(Enemy(swx, swy, worker_animations[variant], variant))
+        enemies.extend(newly_summoned)
+
+        # Player bullets
         alive_bullets = []
         for bullet in bullets:
-            if bullet.update(camera):
-                for worker in enemies:
-                    if bullet.check_hit(worker):
+            if bullet.update(camera, solid_rects):
+                for enemy_unit in enemies:
+                    if enemy_unit.dying:
+                        continue
+                    if bullet.check_hit(enemy_unit):
                         bullet.dead = True
-                        worker.hp -= 1
+                        enemy_unit.take_damage(1)
                         break
                 if not bullet.dead:
                     alive_bullets.append(bullet)
         bullets = alive_bullets
-        enemies = [w for w in enemies if w.hp > 0]
+        enemies = [e for e in enemies if not e.is_removable()]
+
+        # Enemy bullets (clipboards)
+        alive_enemy_bullets = []
+        for bullet in enemy_bullets:
+            if bullet.update(camera, solid_rects):
+                if (not player.dying and bullet.check_hit(player)
+                        and player.take_damage(bullet.damage)):
+                    bullet.dead = True
+                if not bullet.dead:
+                    alive_enemy_bullets.append(bullet)
+        enemy_bullets = alive_enemy_bullets
 
     tuner.update()
 
@@ -337,13 +416,14 @@ while playing:
         floor.build()
         spawn_point = floor.find_spawn_point()
         player.teleport_to(*spawn_point)
-        enemies = spawn_workers(floor, spawn_point)
+        enemies = spawn_enemies(floor, spawn_point)
         bullets = []
+        enemy_bullets = []
 
     camera.update(player.wx, player.wy)
 
     screen.fill((15, 15, 20))
-    floor.draw_scene(screen, camera, [player] + enemies + bullets)
+    floor.draw_scene(screen, camera, [player] + enemies + bullets + enemy_bullets)
 
     elevator_state = "LOCKED" if floor.elevator_locked else "OPEN"
     label = font.render(
