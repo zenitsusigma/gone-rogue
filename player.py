@@ -4,6 +4,8 @@ My player class!!!
 
 import pygame
 
+from bullet import Bullet, WEAPON_STATS, FIRE_DIRECTIONS
+
 class Player:
     speed = 3
     frame_delay = 150
@@ -13,7 +15,7 @@ class Player:
     # south-east of the player (so side walls no longer cover the character).
     feet_offset = 0
 
-    def __init__(self, wx, wy, animations):
+    def __init__(self, wx, wy, animations, bullet_frames=None):
         self.wx = float(wx)
         self.wy = float(wy)
         self.fx = self.wx
@@ -31,6 +33,11 @@ class Player:
         self.dying = False
         self.death_done = False
 
+        # shooting state -- bullet_frames are loaded in main.py (the asset
+        # loading helpers live there) and passed in on construction.
+        self.bullet_frames = bullet_frames
+        self.last_fire_time = 0
+
         self.current_frame = 0
         self.last_frame_time = pygame.time.get_ticks()
 
@@ -45,33 +52,20 @@ class Player:
         left = keys[pygame.K_a] or keys[pygame.K_LEFT]
         right = keys[pygame.K_d] or keys[pygame.K_RIGHT]
 
-        # map the keys onto the iso grid so W/A/S/D move the player straight
-        # up/left/down/right on screen instead of along the diagonal grid axes
         dx = dy = 0
-        self.moving = False
-        if up:
-            dx -= 1
-            dy -= 1
-            self.moving = True
-        if down:
-            dx += 1
-            dy += 1
-            self.moving = True
-        if left:
-            dx -= 1
-            dy += 1
-            self.moving = True
-        if right:
-            dx += 1
-            dy -= 1
-            self.moving = True
+        if up:    dx -= 1; dy -= 1
+        if down:  dx += 1; dy += 1
+        if left:  dx -= 1; dy += 1
+        if right: dx += 1; dy -= 1
 
-        if dx != 0 or dy != 0:
+        self.moving = dx != 0 or dy != 0
+
+        if self.moving:
             length = (dx * dx + dy * dy) ** 0.5
             dx = dx / length * self.speed
             dy = dy / length * self.speed
 
-        if self.moving:
+            # facing logic stays exactly as you already have it
             if up and not down and not left and not right:
                 self.facing = "back"
                 self.facing_left = False
@@ -97,7 +91,7 @@ class Player:
                 self.facing = "frontside"
                 self.facing_left = True
 
-        return dx,dy
+        return dx, dy
 
     def move(self, dx, dy, solid_rects):
         self.fx += dx
@@ -144,6 +138,34 @@ class Player:
     def set_action(self, action):
         if not self.dying:
             self.action = action
+
+    def fire(self, bullets):
+        """Spawn a bullet in the direction the player is facing, if they are
+        holding a gun, the fire-rate cooldown has passed, and the current
+        weapon's active-bullet cap isn't full. Returns the bullet or None."""
+        if (self.dying or self.action not in WEAPON_STATS
+                or self.bullet_frames is None):
+            return None
+
+        stats = WEAPON_STATS[self.action]
+        now = pygame.time.get_ticks()
+        if now - self.last_fire_time < stats["fire_rate"]:
+            return None
+        if len(bullets) >= stats["max_bullets"]:
+            return None
+
+        self.last_fire_time = now
+        vx, vy = FIRE_DIRECTIONS.get((self.facing, self.facing_left), (0.7071, 0.7071))
+        bullet = Bullet(
+            self.wx + vx * 20,
+            self.wy + vy * 20,
+            vx, vy,
+            self.bullet_frames,
+            stats["bullet_speed"],
+            stats["bullet_lifetime"],
+        )
+        bullets.append(bullet)
+        return bullet
 
     def play_death(self):
         self.dying = True
@@ -207,3 +229,13 @@ class Player:
         sx, sy = camera.world_to_screen(self.wx, self.wy)
         rect = sprite.get_rect(midbottom=(sx, sy + self.feet_offset))
         surface.blit(sprite, rect)
+
+    def draw_hitbox(self, surface, camera):
+        """Draw the actual Cartesian collision rectangle in isometric view."""
+        points = [
+            camera.world_to_screen(self.rect.left, self.rect.top),
+            camera.world_to_screen(self.rect.right, self.rect.top),
+            camera.world_to_screen(self.rect.right, self.rect.bottom),
+            camera.world_to_screen(self.rect.left, self.rect.bottom),
+        ]
+        pygame.draw.polygon(surface, (255, 60, 60), points, 2)
