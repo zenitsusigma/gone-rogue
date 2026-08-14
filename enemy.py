@@ -160,6 +160,8 @@ class Enemy:
 
 class MiddleManager(Enemy):
     speed = 1.0
+    strafe_speed = 0.8
+    min_engage_range = 90
     max_hp = 3
     detection_range = 260
     fire_cooldown_ms = 1700
@@ -174,6 +176,7 @@ class MiddleManager(Enemy):
         self.last_shot_time = 0
         self.flash_until = 0
         self.engaged = False
+        self._strafe_dir = random.choice((-1, 1))
 
     def update(self, solid_rects, player=None, bullets_out=None):
         if self.dying:
@@ -181,18 +184,52 @@ class MiddleManager(Enemy):
 
         in_range = False
         if player is not None:
-            dist = ((player.wx - self.wx) ** 2 + (player.wy - self.wy) ** 2) ** 0.5
+            dist = math.hypot(player.wx - self.wx, player.wy - self.wy)
             in_range = dist <= self.detection_range
 
         self.engaged = in_range
         if in_range:
-            self.moving = False
-            self.vx = self.vy = 0.0
-            self.facing_left = player.wx < self.wx
-            self._update_animation()
+            self._engage(player, solid_rects)
             self._try_fire(player, bullets_out)
         else:
             super().update(solid_rects)
+
+    def _engage(self, player, solid_rects):
+        """Strafe side-to-side while facing the player so the walk animation keeps playing."""
+        dx = player.wx - self.wx
+        dy = player.wy - self.wy
+        dist = math.hypot(dx, dy) or 1.0
+        dir_x, dir_y = dx / dist, dy / dist
+        self.facing_left = dx < 0
+
+        if dist < self.min_engage_range:
+            # back away
+            self.vx = -dir_x * self.strafe_speed
+            self.vy = -dir_y * self.strafe_speed
+        else:
+            # strafe perpendicular
+            perp_x, perp_y = -dir_y, dir_x
+            self.vx = perp_x * self.strafe_speed * self._strafe_dir
+            self.vy = perp_y * self.strafe_speed * self._strafe_dir
+
+        self.moving = True
+
+        # simple collision response
+        self.wx += self.vx
+        self.rect.centerx = int(self.wx)
+        if any(self.rect.colliderect(tile) for tile in solid_rects):
+            self.wx -= self.vx
+            self.rect.centerx = int(self.wx)
+            self._strafe_dir *= -1
+
+        self.wy += self.vy
+        self.rect.centery = int(self.wy)
+        if any(self.rect.colliderect(tile) for tile in solid_rects):
+            self.wy -= self.vy
+            self.rect.centery = int(self.wy)
+            self._strafe_dir *= -1
+
+        self._update_animation()
 
     def _try_fire(self, player, bullets_out):
         if bullets_out is None:
@@ -240,15 +277,16 @@ class ExecutiveSummoner(Enemy):
     speed = 0
     detection_range = 320
     summon_cooldown_ms = 4000
+    summon_windup_ms = 1000
     max_lifetime_summons = 4
-    flash_ms = 250
+    spawn_offset = 34
 
     def __init__(self, wx, wy, animations, variant="executive"):
         super().__init__(wx, wy, animations, variant)
         self.engaged = False
         self.last_summon_time = 0
+        self.summon_started_at = None
         self.summons_left = self.max_lifetime_summons
-        self.flash_until = 0
         self.pending_summons = []
 
     def update(self, solid_rects, player=None, bullets_out=None):
@@ -259,48 +297,57 @@ class ExecutiveSummoner(Enemy):
         self.vx = self.vy = 0.0
 
         if player is not None:
-            dist = ((player.wx - self.wx) ** 2 + (player.wy - self.wy) ** 2) ** 0.5
+            dist = math.hypot(player.wx - self.wx, player.wy - self.wy)
             self.engaged = self.engaged or dist <= self.detection_range
             if self.engaged:
                 self.facing_left = player.wx < self.wx
 
         self._update_animation()
-        self._try_summon()
+        self._update_summon()
 
-    def _try_summon(self):
+    def _update_summon(self):
+        now = pygame.time.get_ticks()
+
+        if self.summon_started_at is not None:
+            if now - self.summon_started_at >= self.summon_windup_ms:
+                offset = -self.spawn_offset if self.facing_left else self.spawn_offset
+                self.pending_summons.append((self.wx + offset, self.wy))
+                self.summon_started_at = None
+                self.last_summon_time = now
+            return
+
         if not self.engaged or self.summons_left <= 0:
             return
-        now = pygame.time.get_ticks()
         if now - self.last_summon_time < self.summon_cooldown_ms:
             return
-        self.last_summon_time = now
+
         self.summons_left -= 1
-        self.flash_until = now + self.flash_ms
-        self.pending_summons.append((self.wx, self.wy))
+        self.summon_started_at = now
 
     def take_pending_summons(self):
         summons, self.pending_summons = self.pending_summons, []
         return summons
 
-    def _summon_progress(self):
-        if self.summons_left <= 0:
-            return 0.0
-        elapsed = pygame.time.get_ticks() - self.last_summon_time
-        return max(0.0, min(1.0, elapsed / self.summon_cooldown_ms))
+    def _windup_progress(self):
+        if self.summon_started_at is None:
+            return None
+        elapsed = pygame.time.get_ticks() - self.summon_started_at
+        return max(0.0, min(1.0, elapsed / self.summon_windup_ms))
 
     def draw(self, surface, camera):
         sx, sy = camera.world_to_screen(self.wx, self.wy)
         now = pygame.time.get_ticks()
 
-        if not self.dying and self.summons_left > 0:
-            progress = self._summon_progress()
-            flashing = now < self.flash_until
-            radius = int(10 + progress * 22)
-            alpha = int(60 + progress * 120)
-            if flashing:
-                radius, alpha = 34, 200
+        progress = self._windup_progress()
+        if progress is not None:
+            about_to_spawn = progress > 0.85
+            radius = int(10 + progress * 30)
+            alpha = int(90 + progress * 130)
+            if about_to_spawn:
+                radius, alpha = int(radius * 1.25), 235
             glow = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
             pygame.draw.circle(glow, (200, 60, 220, alpha), (radius, radius), radius)
+            pygame.draw.circle(glow, (240, 190, 250, min(255, alpha + 20)), (radius, radius), radius, width=3)
             surface.blit(glow, glow.get_rect(center=(sx, sy - 6)))
 
         frames = self._frames()

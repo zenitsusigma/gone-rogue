@@ -45,7 +45,9 @@ class Player:
 
         self.current_frame = 0
         self.last_frame_time = pygame.time.get_ticks()
-        self._last_state = None# combat feedback state
+        self._last_state = None
+
+        # combat feedback state
         self.hurt_until = 0
         self.invincible_until = 0
 
