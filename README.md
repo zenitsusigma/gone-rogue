@@ -13,7 +13,7 @@ I made this game for my Y10 computing technology assessment task, because I want
 - Move with WASD or arrow keys, aim and fire with the mouse or Space
 - Switch between pistol (2) and rifle (3)
 - Three enemy types with different behavior: workers (zombies), middle managers (throwers), and executives (summoners)
-- Each floor is procedurally laid out and you have to find and unlock the elevator (e) to descend
+- Each floor is procedurally laid out and you have to find and unlock the elevator (e) to go uppies!
 - Full directional animation set (front/back/side/idle/run/fire/death) for the player and slightly smaller for every enemy type
 
 ## How to run it
@@ -26,7 +26,7 @@ I made this game for my Y10 computing technology assessment task, because I want
    ```
    python main.py
    ```
-3. Controls: WASD/arrows to move, Space or left-click to fire, 2/2 to switch weapons, e to open the elevator, esc to quit.
+3. Controls: WASD/arrows to move, Space or left-click to fire, 2/3 to switch weapons, e to open the elevator, esc to quit.
 
 ## What I'd change next
 
@@ -38,4 +38,4 @@ Built from the starter scaffold provided for my school's Computing Technology co
 
 ## License
 
-MIT [LICENSE(click here)](LICENSE).
+MIT [LICENSE (click here)](LICENSE).
