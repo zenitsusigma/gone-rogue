@@ -7,7 +7,7 @@ import pygame
 
 from player import Player
 from enemy import Enemy, MiddleManager, ExecutiveSummoner
-from world import Floor, init_tile_images, OffsetTuner, tile_size, floor as FLOOR_TILE
+from world import Floor, init_tile_images, tile_size, floor as FLOOR_TILE
 from camera import Camera
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -20,7 +20,7 @@ pygame.init()
 # window
 screen = pygame.display.set_mode((800,600))
 init_tile_images()
-pygame.display.set_caption("Gone Rogue tile renderer")
+pygame.display.set_caption("Gone Rogue - Skyscraper Roguelite")
 
 clock = pygame.time.Clock()
 
@@ -253,7 +253,6 @@ bullets = []
 enemy_bullets = []
 floor_number = 1
 font = pygame.font.Font(str(GAME_FONT_PATH), 28)
-tuner = OffsetTuner()
 tuner_font = pygame.font.Font(str(GAME_FONT_PATH), 18)
 
 
@@ -334,7 +333,6 @@ while playing:
         if event.type == pygame.QUIT:
             playing = False
         elif event.type == pygame.KEYDOWN:
-            tuner.handle_key(event.key, event.mod)
             if event.key == pygame.K_e:
                 floor.try_unlock_elevator(player.rect)
             elif event.key == pygame.K_ESCAPE:
@@ -353,14 +351,14 @@ while playing:
 
     keys = pygame.key.get_pressed()
     solid_rects = floor.get_solid_rects()
-    if player.dying or tuner.active:
+    if player.dying:
         player.moving = False
     else:
         dx, dy = player.handle_input(keys)
         player.move(dx, dy, solid_rects)
     player.update_animation()
 
-    if not tuner.active:
+    if True:
         fire_pressed = keys[pygame.K_SPACE] or pygame.mouse.get_pressed()[0]
         player.set_firing(fire_pressed)
         if fire_pressed:
@@ -405,8 +403,6 @@ while playing:
                     alive_enemy_bullets.append(bullet)
         enemy_bullets = alive_enemy_bullets
 
-    tuner.update()
-
     if floor.check_elevator(player.rect):
         floor_number += 1
         floor.build()
@@ -427,7 +423,6 @@ while playing:
         f"WASD/arrows move, 2/3 switch to pistol/rifle, Space fires, E opens the elevator, Esc quits",
         True, (255, 255, 255))
     screen.blit(label, (10, 10))
-    tuner.draw(screen, tuner_font)
 
     pygame.display.flip()
 
