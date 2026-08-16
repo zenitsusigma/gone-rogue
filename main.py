@@ -246,10 +246,6 @@ def spawn_enemies(floor_obj, avoid_point):
 # character position
 floor = Floor()
 camera = Camera(800, 600, 64, 128, 64)
-# temporary demo props – delete later
-floor.add_prop(4, 4, "crate")
-floor.add_prop(5, 2, "drawers")
-floor.add_wall_decor(0, 3, "left", "sign")
 spawn_point = floor.find_spawn_point()
 player = Player(*spawn_point, animations, bullet_frames)
 enemies = spawn_enemies(floor, spawn_point)
