@@ -32,6 +32,15 @@ I made this game for my Y10 computing technology assessment task, because I want
 
 If I had 4 more weeks to develop this game, I would focus on adding actual progression to the game, removing its current puzzle-like structure like implementing the lootbox system I built sprites for. I would also revisit my art assets to bring them to a more consistent style since they were made over separate sessions and some were scrapped and because of this, inconsistency crept in which I could fix!
 
+## Screenshots of gameplay
+<img width="804" height="633" alt="Screenshot 2026-08-20 191040" src="https://github.com/user-attachments/assets/529f7bfe-dfcf-47b1-9f13-1118a03a07a0" />
+<img width="804" height="633" alt="image (29)" src="https://github.com/user-attachments/assets/67e079ab-9bd5-48ff-b3f8-c2de0d913f31" />
+<img width="804" height="633" alt="Screenshot 2026-08-20 191312" src="https://github.com/user-attachments/assets/66e41a67-09f6-4c37-afa6-0e83ed0000ac" />
+<img width="804" height="633" alt="Screenshot 2026-08-20 191219" src="https://github.com/user-attachments/assets/de6518d0-8a09-4c26-90e0-0d88bc69f7c0" />
+<img width="804" height="633" alt="Screenshot 2026-08-20 191335" src="https://github.com/user-attachments/assets/84213685-4c6e-48f1-bbe2-64168368e111" />
+
+These screenshots showcase various aspects of the game including enemies, deaths, floor gen, elevator unlocking, etc.
+
 ## Credits
 
 Built from the starter scaffold provided for my school's Computing Technology course (basic PyGame setup). All game logic, enemy AI, animation system, level generation, and art direction beyond that starting scaffold are my own.
